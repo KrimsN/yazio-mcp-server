@@ -2,10 +2,13 @@
 
 Creating and updating are the only tools in this server that are more than a
 translation of an API call. YAZIO's recipe endpoints do not compute anything:
-the client is expected to submit the finished dish's nutrients alongside its
-ingredients. So create_recipe resolves every ingredient, scales its nutrients
-to the amount used, and sums them before posting; update_recipe does the same
-when new ingredients are given, and otherwise resends what is already stored.
+the client is expected to submit the recipe's nutrients alongside its
+ingredients. The stored `nutrients` field holds the values **for one portion**,
+not for the whole dish — that is what the app writes and what it reads back.
+So create_recipe resolves every ingredient, scales its nutrients to the amount
+used, sums them into the dish total and then divides by portion_count before
+posting; update_recipe does the same when new ingredients are given, and
+otherwise rescales what is already stored if the portion count changed.
 """
 
 from __future__ import annotations
@@ -145,7 +148,9 @@ def register(mcp: FastMCP) -> None:
 
         The recipe's nutrients are computed from the ingredients — YAZIO stores
         what the client submits and does not derive them — so every ingredient
-        must resolve to a real product before the recipe can be created.
+        must resolve to a real product before the recipe can be created. What is
+        stored is the nutrients of one portion, so the dish total is divided by
+        portion_count on the way out.
 
         Args:
             name: Name of the recipe.
@@ -183,6 +188,8 @@ def register(mcp: FastMCP) -> None:
             )
 
             total_nutrients = sum_nutrients([item["nutrients"] for item in resolved])
+            # YAZIO's `nutrients` field is per portion, not per dish.
+            per_portion = scale_nutrients(total_nutrients, 1 / float(portion_count))
 
             draft = RecipeDraft(
                 id=str(uuid.uuid4()).upper(),
@@ -192,15 +199,13 @@ def register(mcp: FastMCP) -> None:
                 portion_count=portion_count,
                 instructions=list(instructions or []),
                 servings=[item["serving_entry"] for item in resolved],
-                nutrients=RecipeDraftNutrients.from_dict(total_nutrients),
+                nutrients=RecipeDraftNutrients.from_dict(per_portion),
             )
 
             response = await api_create_user_recipe.asyncio_detailed(
                 client=client, body=draft
             )
             expect_written(ctx, response, f"create the recipe '{name}'")
-
-        per_portion = scale_nutrients(total_nutrients, 1 / float(portion_count))
 
         return round_floats(
             {
@@ -241,6 +246,10 @@ def register(mcp: FastMCP) -> None:
         current value. `ingredients`, if given, replaces the whole ingredient
         list rather than patching it — see create_recipe for the expected
         format, and the same two-ingredient minimum applies.
+
+        Changing `portion_count` alone keeps the dish the same size: the stored
+        per-portion nutrients are rescaled so the total across all portions is
+        unchanged.
 
         Args:
             recipe_id: The recipe's UUID, from list_my_recipes.
@@ -286,10 +295,9 @@ def register(mcp: FastMCP) -> None:
                 raise ToolError(f"no recipe found with id {recipe_id}")
 
             final_name = name.strip() if name is not None else (plain(recipe.name) or "")
+            current_portion_count = int(plain(recipe.portion_count) or 1)
             final_portion_count = (
-                portion_count
-                if portion_count is not None
-                else int(plain(recipe.portion_count) or 1)
+                portion_count if portion_count is not None else current_portion_count
             )
             final_instructions = (
                 list(instructions)
@@ -305,9 +313,25 @@ def register(mcp: FastMCP) -> None:
                     )
                 )
                 total_nutrients = sum_nutrients([item["nutrients"] for item in resolved])
+                per_portion = scale_nutrients(
+                    total_nutrients, 1 / float(final_portion_count)
+                )
                 servings = [item["serving_entry"] for item in resolved]
             else:
-                total_nutrients = plain(recipe.nutrients) or {}
+                # The stored field is per portion, for the portion count the
+                # recipe had. Splitting the same dish differently has to rescale
+                # it, or changing 2 portions to 4 would silently double the dish.
+                stored = plain(recipe.nutrients) or {}
+                per_portion = (
+                    scale_nutrients(
+                        stored, current_portion_count / float(final_portion_count)
+                    )
+                    if final_portion_count != current_portion_count
+                    else dict(stored)
+                )
+                total_nutrients = scale_nutrients(
+                    per_portion, float(final_portion_count)
+                )
                 servings = _draft_servings_from_recipe(recipe)
 
             draft = RecipeDraft(
@@ -316,15 +340,13 @@ def register(mcp: FastMCP) -> None:
                 portion_count=final_portion_count,
                 instructions=final_instructions,
                 servings=servings,
-                nutrients=RecipeDraftNutrients.from_dict(total_nutrients),
+                nutrients=RecipeDraftNutrients.from_dict(per_portion),
             )
 
             response = await api_update_user_recipe.asyncio_detailed(
                 client=client, id=recipe_id, body=draft
             )
             expect_written(ctx, response, f"update the recipe '{final_name}'")
-
-        per_portion = scale_nutrients(total_nutrients, 1 / float(final_portion_count))
 
         return round_floats(
             {
@@ -459,6 +481,9 @@ def _shape_recipe(recipe: Any, brief: bool) -> dict[str, Any]:
 
     The brief form is used when listing, where a dozen full ingredient lists
     would bury the names the caller is actually choosing between.
+
+    The stored `nutrients` field is already per portion, so the whole dish is
+    that multiplied by portion_count.
     """
     portion_count = plain(recipe.portion_count) or 1
     nutrients = plain(recipe.nutrients) or {}
@@ -469,13 +494,13 @@ def _shape_recipe(recipe: Any, brief: bool) -> dict[str, Any]:
         "portion_count": portion_count,
         "is_yazio_recipe": plain(recipe.is_yazio_recipe),
         "is_pro_recipe": plain(recipe.is_pro_recipe),
-        "nutrients_per_portion": group_nutrients(
-            scale_nutrients(nutrients, 1 / portion_count)
-        ),
+        "nutrients_per_portion": group_nutrients(nutrients),
     }
 
     if not brief:
-        shaped["nutrients_total"] = group_nutrients(nutrients)
+        shaped["nutrients_total"] = group_nutrients(
+            scale_nutrients(nutrients, float(portion_count))
+        )
         shaped["servings"] = plain(recipe.servings)
         shaped["instructions"] = plain(recipe.instructions)
         shaped["locale"] = plain(recipe.locale)
@@ -510,6 +535,13 @@ async def _resolve_ingredient(
             f"ingredient {index + 1} ({product.get('name')}) needs either an amount "
             "or a serving with serving_quantity"
         )
+    # An amount of zero or less is nonsense in a recipe and the API takes it
+    # without complaint, so it has to be refused here — as portion_count is.
+    if amount is not None and float(amount) <= 0:
+        raise ToolError(
+            f"ingredient {index + 1} ({product.get('name')}): amount must be "
+            f"greater than zero; got {amount}"
+        )
 
     # Reuse the tracking rules so a recipe ingredient and a tracked portion mean
     # the same thing for the same numbers.
@@ -524,7 +556,10 @@ async def _resolve_ingredient(
         base_unit=product.get("base_unit") or "g",
         amount=resolved_amount,
     )
-    if serving is not None:
+    # Only label the entry with a serving when the serving is what produced the
+    # amount. An explicit `amount` overrides the serving in _resolve_amount, so
+    # carrying the label over would store 250 ml of nutrients as "1 can".
+    if serving is not None and amount is None:
         serving_entry.serving = str(serving)
         serving_entry.serving_quantity = float(quantity if quantity is not None else 1)
 

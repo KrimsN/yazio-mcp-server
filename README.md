@@ -260,10 +260,17 @@ knowing before touching that code.
 ## How `create_recipe` works
 
 YAZIO's recipe endpoint stores what the client submits and derives nothing: a
-recipe carries its own nutrient totals. So `create_recipe` resolves every
-ingredient to a real product, scales that product's nutrients to the amount the
-recipe uses, and sums them before posting. An ingredient that cannot be resolved
-fails the call rather than silently contributing zero.
+recipe carries its own nutrients. So `create_recipe` resolves every ingredient
+to a real product, scales that product's nutrients to the amount the recipe
+uses, and sums them before posting. An ingredient that cannot be resolved fails
+the call rather than silently contributing zero.
+
+The stored `nutrients` field holds the values **for one portion**, not for the
+whole dish — undocumented, but that is what the app writes and reads back. So
+the summed dish total is divided by `portion_count` before it is sent, and
+`get_recipe` multiplies the stored value back up to report the total. Changing
+a recipe's `portion_count` through `update_recipe` rescales the stored
+per-portion values, keeping the dish itself the same size.
 
 Two of its rules come from the API rather than from taste, and both are enforced
 before the request goes out because the API signals them badly:

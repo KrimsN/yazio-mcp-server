@@ -24,7 +24,7 @@ dependencies = [
   # and while that is still 0.x it is the minor that moves when a spec change
   # renames or removes something this server imports — so the range is pinned to
   # one minor rather than one major.
-  "yazio-sdk>=0.3.0,<0.4.0",
+  "yazio-sdk>=0.4.0,<0.5.0",
   # Capped at the major: mcp 2.0 removed `mcp.server.fastmcp`, which is what
   # server.py is built on. Without the cap a fresh install resolves to 2.x and
   # fails at import — the dev shell hides this by pinning 1.27.

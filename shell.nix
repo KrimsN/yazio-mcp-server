@@ -9,12 +9,12 @@ let
   # `version` and replace `hash` with the sha256 nix reports on the first build.
   yazio-sdk = pkgs.python3Packages.buildPythonPackage rec {
     pname = "yazio_sdk";
-    version = "0.3.0";
+    version = "0.4.0";
     pyproject = true;
 
     src = pkgs.python3Packages.fetchPypi {
       inherit pname version;
-      sha256 = "93e6da6eae3e370036813fdf4a91c6354f107454d5af3689b9b3d2b2a5e966e9";
+      sha256 = "fb2d5ecf9342f0d647ced80a85d64fc4e63644e21c06a6b7b1e245d4fa737c9a";
     };
 
     build-system = [ pkgs.python3Packages.hatchling ];

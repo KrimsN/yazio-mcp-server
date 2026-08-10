@@ -203,6 +203,7 @@ python3 -m yazio_mcp --host 0.0.0.0 --allowed-host yazio.example.com
 | `get_goals` | The day's energy, macro, water, step and weight goals |
 | `get_water` | Water intake against goal |
 | `get_activity_summary` | Steps and exercise energy across a range |
+| `get_last_weight` | The most recently logged body weight |
 
 **Products**
 
@@ -230,6 +231,7 @@ python3 -m yazio_mcp --host 0.0.0.0 --allowed-host yazio.example.com
 | `list_my_recipes` | The user's own recipes |
 | `get_recipe` | One recipe: ingredients, instructions, nutrients per portion |
 | `create_recipe` | Build a recipe from tracked products |
+| `update_recipe` | Change one of the user's own recipes: name, ingredients, portions or steps |
 | `delete_recipe` | Remove one of the user's own recipes; logged portions stay |
 | `set_recipe_photo` | Upload a photo for one of the user's own recipes |
 | `delete_recipe_photo` | Remove the photo from one of the user's own recipes |

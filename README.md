@@ -234,7 +234,9 @@ python3 -m yazio_mcp --host 0.0.0.0 --allowed-host yazio.example.com
 | `set_recipe_photo` | Upload a photo for one of the user's own recipes |
 | `delete_recipe_photo` | Remove the photo from one of the user's own recipes |
 | `browse_recipes` | YAZIO's editorial catalogue for a country |
-| `get_favorite_recipes` | Recipes marked as favourites |
+| `get_favorite_recipes` | Recipes marked as favourites, with the portion count each was saved at |
+| `favorite_recipe` | Mark a recipe as a favourite, at a portion count |
+| `unfavorite_recipe` | Take a recipe out of the favourites; the recipe itself stays |
 
 **Profile**
 
@@ -301,6 +303,14 @@ These are the ones that shaped code here rather than the spec:
   `204`, and does nothing. So the tool looks the entry up first to learn its
   bucket, and reads the day back afterwards rather than believing the status
   code.
+- **A favourite has an id of its own.** `PUT /v22/user/favorites/recipes` takes
+  an `id` the client mints alongside the `recipe_id`, and `DELETE
+  /v22/user/favorites/{id}` removes the *favourite* by that id — not the recipe,
+  and unlike the product favourites next door, which are keyed by `product_id`.
+  A model only ever holds the recipe's id, so `favorite_recipe` and
+  `unfavorite_recipe` look the entry up first: one to reuse the id a recipe was
+  already favourited under rather than listing it twice, the other to learn what
+  to delete.
 - **`create_recipe` validates before sending.** Two API rules are enforced
   client-side because the API signals them badly: fewer than two ingredients is
   rejected with a message about collections, and a `portion_count` that

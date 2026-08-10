@@ -1,4 +1,4 @@
-"""Reading, creating, updating and photographing recipes.
+"""Reading, creating, updating, photographing and favouriting recipes.
 
 Creating and updating are the only tools in this server that are more than a
 translation of an API call. YAZIO's recipe endpoints do not compute anything:
@@ -23,6 +23,7 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from yazio_sdk.api.content import list_featured_recipes as api_list_featured_recipes
+from yazio_sdk.api.recipes import add_favorite_recipe as api_add_favorite_recipe
 from yazio_sdk.api.recipes import add_user_recipe_image as api_add_user_recipe_image
 from yazio_sdk.api.recipes import create_user_recipe as api_create_user_recipe
 from yazio_sdk.api.recipes import delete_user_recipe as api_delete_user_recipe
@@ -30,9 +31,11 @@ from yazio_sdk.api.recipes import delete_user_recipe_image as api_delete_user_re
 from yazio_sdk.api.recipes import get_recipe as api_get_recipe
 from yazio_sdk.api.recipes import list_favorite_recipes as api_list_favorite_recipes
 from yazio_sdk.api.recipes import list_user_recipes as api_list_user_recipes
+from yazio_sdk.api.recipes import remove as api_remove_favorite
 from yazio_sdk.api.recipes import update_user_recipe as api_update_user_recipe
 from yazio_sdk.models import (
     AddUserRecipeImageBody,
+    FavoriteRecipe,
     RecipeDraft,
     RecipeDraftNutrients,
     RecipeDraftServingsItem,
@@ -98,12 +101,114 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def get_favorite_recipes(ctx: Context) -> dict[str, Any]:
-        """List the recipes this user has marked as favourites."""
-        async with yazio_client(ctx) as client:
-            response = await api_list_favorite_recipes.asyncio_detailed(client=client)
-            favorites = expect_ok(ctx, response, "load your favourite recipes")
+        """List the recipes this user has marked as favourites.
 
-        return round_floats({"favorites": plain(favorites)})
+        Each entry carries the `recipe_id` the other recipe tools take, and the
+        portion count the recipe was favourited at.
+        """
+        async with yazio_client(ctx) as client:
+            favorites = await _load_favorites(ctx, client)
+
+        return round_floats(
+            {"favorites": [_shape_favorite(favorite) for favorite in favorites]}
+        )
+
+    @mcp.tool()
+    async def favorite_recipe(
+        ctx: Context, recipe_id: str, portion_count: float | None = None
+    ) -> dict[str, Any]:
+        """Mark a recipe as one of this user's favourites.
+
+        Any recipe can be favourited, the user's own and YAZIO's alike. A
+        favourite remembers the portion count it was saved at, which is what the
+        app offers when logging it later; favouriting a recipe that is already a
+        favourite changes that count rather than listing the recipe twice.
+
+        Args:
+            recipe_id: The recipe's UUID, from list_my_recipes, get_recipe or
+                browse_recipes.
+            portion_count: How many portions to remember the recipe at. Defaults
+                to the recipe's own portion count.
+        """
+        if portion_count is not None and portion_count <= 0:
+            raise ToolError("portion_count must be greater than zero")
+
+        async with yazio_client(ctx) as client:
+            # Loading the recipe first turns an id that names nothing into an
+            # explanation: the favourite endpoint answers 204 whatever it is
+            # given, so a typo would otherwise be reported as a success.
+            recipe = await _load_recipe(ctx, client, recipe_id)
+            if recipe is None:
+                raise ToolError(f"no recipe found with id {recipe_id}")
+
+            existing = _favorite_ids_for(await _load_favorites(ctx, client), recipe_id)
+            # A favourite has an id of its own — that is what
+            # DELETE /v22/user/favorites/{id} removes — so minting a fresh one
+            # for a recipe that is already favourited risks leaving the same
+            # recipe in the list under two ids. Reusing the stored id makes a
+            # repeat call an update of its portion count instead.
+            favorite_id = existing[0] if existing else str(uuid.uuid4()).upper()
+            portions = float(
+                portion_count
+                if portion_count is not None
+                else (plain(recipe.portion_count) or 1)
+            )
+
+            response = await api_add_favorite_recipe.asyncio_detailed(
+                client=client,
+                body=FavoriteRecipe(
+                    id=favorite_id, recipe_id=recipe_id, portion_count=portions
+                ),
+            )
+            expect_written(ctx, response, f"favourite the recipe '{plain(recipe.name)}'")
+
+        return round_floats(
+            {
+                "favorited": True,
+                "recipe_id": recipe_id,
+                "name": plain(recipe.name),
+                "portion_count": portions,
+                "favorite_id": favorite_id,
+                "was_already_a_favorite": bool(existing),
+            }
+        )
+
+    @mcp.tool()
+    async def unfavorite_recipe(ctx: Context, recipe_id: str) -> dict[str, Any]:
+        """Remove a recipe from this user's favourites.
+
+        The recipe itself is untouched, as are any portions already logged
+        against it — use delete_recipe to remove one of this user's own recipes.
+
+        Args:
+            recipe_id: The recipe's UUID, as reported by get_favorite_recipes.
+        """
+        async with yazio_client(ctx) as client:
+            favorite_ids = _favorite_ids_for(await _load_favorites(ctx, client), recipe_id)
+            if not favorite_ids:
+                raise ToolError(
+                    f"recipe {recipe_id} is not one of your favourites. This "
+                    "takes the id of the recipe itself — check "
+                    "get_favorite_recipes for the ones you have favourited."
+                )
+
+            # Removal is by the favourite's own id, not the recipe's, and
+            # nothing stops a second entry pointing at the same recipe — one
+            # written by another client before this tool existed, say. Each has
+            # to go, or the recipe stays in the list.
+            for favorite_id in favorite_ids:
+                response = await api_remove_favorite.asyncio_detailed(
+                    client=client, id=favorite_id
+                )
+                expect_written(
+                    ctx, response, f"remove recipe {recipe_id} from your favourites"
+                )
+
+        return {
+            "unfavorited": True,
+            "recipe_id": recipe_id,
+            "removed": len(favorite_ids),
+        }
 
     @mcp.tool()
     async def browse_recipes(ctx: Context, country_code: str = "de") -> dict[str, Any]:
@@ -452,6 +557,40 @@ async def _load_recipe(ctx: Context, client: Any, recipe_id: str) -> Any:
     if response.status_code == 404:
         return None
     return expect_ok(ctx, response, f"load recipe {recipe_id}")
+
+
+async def _load_favorites(ctx: Context, client: Any) -> list[Any]:
+    response = await api_list_favorite_recipes.asyncio_detailed(client=client)
+    return expect_ok(ctx, response, "load your favourite recipes")
+
+
+def _favorite_ids_for(favorites: list[Any], recipe_id: str) -> list[str]:
+    """The ids of the favourite entries pointing at one recipe.
+
+    Both writes are addressed by the favourite's own id while a caller only ever
+    has the recipe's, so every favourite tool starts by translating one into the
+    other.
+    """
+    return [
+        str(plain(favorite.id))
+        for favorite in favorites
+        if plain(favorite.recipe_id) == recipe_id and plain(favorite.id)
+    ]
+
+
+def _shape_favorite(favorite: Any) -> dict[str, Any]:
+    """Present one favourite entry, keeping its two ids apart.
+
+    The payload calls the favourite's own id `id`, which reads like the
+    recipe's; passing it to get_recipe or track_recipe finds nothing. Naming it
+    `favorite_id` leaves `recipe_id` as the one id the other tools take.
+    """
+    return {
+        "recipe_id": plain(favorite.recipe_id),
+        "portion_count": plain(favorite.portion_count),
+        "favorite_id": plain(favorite.id),
+        "yazio_id": plain(favorite.yazio_id),
+    }
 
 
 async def _require_own_recipe(ctx: Context, client: Any, recipe_id: str) -> Any:

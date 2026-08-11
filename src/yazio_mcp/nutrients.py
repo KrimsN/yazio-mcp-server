@@ -11,12 +11,18 @@ kept for macros, but minerals and vitamins are converted to milligrams on the wa
 out: in grams they are values like 0.00012, small enough that any downstream
 rounding reports them as zero. Each group's unit is stated in the output so the
 mixture cannot be misread.
+
+`flatten_nutrients` runs the same translation backwards, for the one place a
+caller supplies nutrients rather than reads them: creating a product. It takes
+the units this module reports in and returns the flat dotted map the API stores.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
+
+from mcp.server.fastmcp.exceptions import ToolError
 
 # YAZIO's own ordering for the four headline numbers. Anything outside this list
 # still comes through, just after these.
@@ -38,6 +44,39 @@ _UNITS = {
     "vitamins": ("mg", 1000.0),
     "other": ("g", 1.0),
 }
+
+# The names a caller may use for a nutrient without knowing YAZIO's vocabulary.
+# Only the four the app itself puts on a label are aliased: the rest of YAZIO's
+# forty-odd keys are undocumented, and guessing `nutrient.fiber` for whatever the
+# API actually calls fibre would store a number that nothing ever reads back.
+# Everything else therefore has to be named by its exact dotted key.
+_ALIASES = {
+    "calories": "energy.energy",
+    "carb": "nutrient.carb",
+    "carbohydrate": "nutrient.carb",
+    "carbohydrates": "nutrient.carb",
+    "carbs": "nutrient.carb",
+    "energy": "energy.energy",
+    "energy_kcal": "energy.energy",
+    "fat": "nutrient.fat",
+    "kcal": "energy.energy",
+    "protein": "nutrient.protein",
+}
+
+# What a caller's number has to be multiplied by to reach YAZIO's own storage
+# unit — the inverse of the conversion `group_nutrients` applies on the way out,
+# so a value read from one product can be handed straight to another.
+_INPUT_FACTORS = {
+    "energy": 1.0,
+    "nutrient": 1.0,
+    "mineral": 0.001,
+    "vitamin": 0.001,
+}
+
+# The keys a caller is expected to fill in, named here so that the rules about
+# them live with the vocabulary rather than being spelled out again elsewhere.
+ENERGY_KEY = "energy.energy"
+MACRO_KEYS = tuple(f"nutrient.{name}" for name in _MACRO_ORDER)
 
 
 def group_nutrients(raw: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -110,6 +149,64 @@ def _ordered(values: dict[str, float], first: tuple[str, ...]) -> dict[str, floa
         key: value for key, value in sorted(values.items()) if key not in leading
     }
     return {**leading, **trailing}
+
+
+def flatten_nutrients(values: Mapping[str, Any], basis: float) -> dict[str, float]:
+    """Turn a caller's nutrient table into the flat, per-base-unit map YAZIO stores.
+
+    The inverse of `group_nutrients`, and it reads the same units: energy in
+    kilocalories, macros in grams, minerals and vitamins in milligrams. `basis`
+    is how many base units the numbers describe — a label reading "per 100 g" is
+    a basis of 100 — because a stored product is always per one.
+
+    Names outside the alias table have to be exact dotted keys, which is a
+    deliberate refusal to guess: the API takes any key at all and stores it
+    without complaint, so a misspelt nutrient would look accepted and then read
+    back as absent for the life of the product.
+    """
+    if basis <= 0:
+        raise ToolError(f"the nutrient basis must be greater than zero; got {basis}")
+    if not values:
+        raise ToolError("a product needs its nutrients; none were given")
+
+    flat: dict[str, float] = {}
+    for key, value in values.items():
+        api_key = _api_key(key)
+        if api_key in flat:
+            raise ToolError(
+                f"'{key}' names {api_key}, which was already given; "
+                "each nutrient may only be set once"
+            )
+        family = api_key.partition(".")[0]
+        flat[api_key] = _as_number(key, value) * _INPUT_FACTORS[family] / basis
+
+    return flat
+
+
+def _api_key(key: str) -> str:
+    """Resolve one caller-supplied nutrient name to the key YAZIO stores it under."""
+    name = str(key).strip().lower()
+    if name in _ALIASES:
+        return _ALIASES[name]
+
+    prefix, dot, rest = name.partition(".")
+    if dot and rest and prefix in _INPUT_FACTORS:
+        return name
+
+    raise ToolError(
+        f"'{key}' is not a nutrient this server will store. Use one of "
+        f"{', '.join(sorted(_ALIASES))}, or the exact dotted key a product "
+        "already carries in get_product, such as 'mineral.calcium' or "
+        "'vitamin.b12'."
+    )
+
+
+def _as_number(key: str, value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ToolError(f"nutrient '{key}' must be a number; got {value!r}")
+    if value < 0:
+        raise ToolError(f"nutrient '{key}' cannot be negative; got {value}")
+    return float(value)
 
 
 def scale_nutrients(raw: Mapping[str, Any] | None, factor: float) -> dict[str, float]:

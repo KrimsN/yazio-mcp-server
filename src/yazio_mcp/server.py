@@ -18,7 +18,9 @@ activity, and building recipes.
 
 Start with get_daily_summary for how a day is going, get_diary for what was
 actually eaten, and get_nutrition_range for trends across days. To log food,
-search_products first — tracking needs the product_id that search returns.
+search_products first — tracking needs the product_id that search returns. A
+food the database does not have can be added with create_product, which returns
+an id that tracks like any other.
 
 Energy is in kilocalories, macros in grams, and vitamins and minerals in
 milligrams. Every nutrient block states its own units. Dates are YYYY-MM-DD and

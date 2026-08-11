@@ -14,7 +14,9 @@ from yazio_mcp.server import build_app, build_server
 # accidentally dropping a registration fails the suite rather than going unnoticed.
 EXPECTED_TOOLS = {
     "browse_recipes",
+    "create_product",
     "create_recipe",
+    "delete_product",
     "delete_recipe",
     "delete_recipe_photo",
     "get_activity_summary",
@@ -29,6 +31,7 @@ EXPECTED_TOOLS = {
     "get_recipe",
     "get_suggested_products",
     "get_water",
+    "list_my_products",
     "list_my_recipes",
     "log_exercise",
     "log_water",

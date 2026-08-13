@@ -32,6 +32,7 @@ from ..common import (
     round_floats,
 )
 from ..session import expect_ok, expect_written, yazio_client
+from ..streaks import sync_streak
 from .products import fetch_product
 
 
@@ -94,6 +95,8 @@ def register(mcp: FastMCP) -> None:
             )
             expect_written(ctx, response, f"log {product.get('name', product_id)}")
 
+            streak = await sync_streak(ctx, client, day, slot)
+
         return round_floats(
             {
                 "tracked": True,
@@ -106,6 +109,7 @@ def register(mcp: FastMCP) -> None:
                 "base_unit": product.get("base_unit"),
                 "serving": serving,
                 "serving_quantity": quantity,
+                "streak": streak,
             }
         )
 
@@ -146,6 +150,8 @@ def register(mcp: FastMCP) -> None:
             )
             expect_written(ctx, response, f"log {portions} portion(s) of a recipe")
 
+            streak = await sync_streak(ctx, client, day, slot)
+
         return round_floats(
             {
                 "tracked": True,
@@ -154,6 +160,7 @@ def register(mcp: FastMCP) -> None:
                 "daytime": slot,
                 "recipe_id": recipe_id,
                 "portions": portions,
+                "streak": streak,
             }
         )
 

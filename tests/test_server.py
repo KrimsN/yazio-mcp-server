@@ -35,6 +35,7 @@ EXPECTED_TOOLS = {
     "log_weight",
     "search_products",
     "set_recipe_photo",
+    "track_meal_photo",
     "track_product",
     "track_recipe",
     "untrack_item",

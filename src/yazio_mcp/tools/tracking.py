@@ -7,22 +7,34 @@ exactly what was written without re-reading the diary.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import uuid
+from io import BytesIO
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from yazio_sdk.api.diary import add_consumed_items as api_add_consumed_items
 from yazio_sdk.api.diary import delete_consumed_item as api_delete_consumed_item
+from yazio_sdk.api.diary import get_nutrimind_search_image as api_get_nutrimind_search_image
 from yazio_sdk.api.diary import list_consumed_items as api_list_consumed_items
 from yazio_sdk.api.diary import set_water_intake as api_set_water_intake
+from yazio_sdk.api.diary import (
+    upload_nutrimind_search_image as api_upload_nutrimind_search_image,
+)
+from yazio_sdk.api.user import get_user as api_get_user
 from yazio_sdk.models import (
     ConsumedItems,
     ConsumedItemsDeletion,
     ConsumedItemsProductsItem,
+    ConsumedItemsSimpleProductsItem,
     ConsumedRecipePortion,
+    NutrientSummary,
+    UploadNutrimindSearchImageBody,
     WaterIntakeEntry,
 )
+from yazio_sdk.types import File
 
 from ..common import (
     plain,
@@ -31,8 +43,9 @@ from ..common import (
     resolve_timestamp,
     round_floats,
 )
+from ..nutrients import group_nutrients
 from ..session import expect_ok, expect_written, yazio_client
-from .products import fetch_product
+from .products import _search_country, _search_locales, fetch_product
 
 
 def register(mcp: FastMCP) -> None:
@@ -154,6 +167,106 @@ def register(mcp: FastMCP) -> None:
                 "daytime": slot,
                 "recipe_id": recipe_id,
                 "portions": portions,
+            }
+        )
+
+    @mcp.tool()
+    async def track_meal_photo(
+        ctx: Context,
+        image_base64: str,
+        daytime: str,
+        date: str | None = None,
+    ) -> dict[str, Any]:
+        """Log a meal from a photo, using YAZIO's AI food recognition.
+
+        Uploads the photo and logs whatever the recognition model comes back
+        with. That is always a single best guess rather than a list of
+        candidates to choose between — the same as what the app's own camera
+        flow shows before a tap on "confirm" — so review the name and
+        nutrients in the result. If the guess is wrong, untrack_item removes
+        the entry; search_products and track_product log the right food in
+        its place.
+
+        Args:
+            image_base64: The meal photo's file contents, base64-encoded.
+            daytime: One of breakfast, lunch, dinner, snack.
+            date: Day to log against as YYYY-MM-DD. Defaults to today.
+        """
+        try:
+            image_bytes = base64.b64decode(image_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ToolError(f"image_base64 is not valid base64: {exc}") from exc
+        if not image_bytes:
+            raise ToolError("image_base64 decoded to an empty file")
+
+        slot = resolve_daytime(daytime)
+        day = resolve_date(date)
+        search_id = str(uuid.uuid4()).upper()
+
+        async with yazio_client(ctx) as client:
+            # Recognition is ranked the same way product search is, and takes
+            # the same two parameters — reusing the profile lookup keeps a
+            # photo taken abroad matched against the right food database.
+            profile_response = await api_get_user.asyncio_detailed(client=client)
+            profile = expect_ok(ctx, profile_response, "read your search region")
+            countries = _search_country(profile)
+            locales = _search_locales(profile)
+
+            upload_response = await api_upload_nutrimind_search_image.asyncio_detailed(
+                id=search_id,
+                client=client,
+                body=UploadNutrimindSearchImageBody(
+                    image=File(payload=BytesIO(image_bytes))
+                ),
+                countries=countries,
+                locales=locales,
+            )
+            expect_written(ctx, upload_response, "upload the meal photo")
+
+            result_response = await api_get_nutrimind_search_image.asyncio_detailed(
+                id=search_id, client=client, countries=countries, locales=locales
+            )
+            result = expect_ok(ctx, result_response, "read the recognition result")
+
+            # Every capture came back with one guess in simple_products and
+            # nothing in products or ingredients — never a list to pick from.
+            # The first entry is taken on the assumption that stays true; there
+            # is no candidate-selection endpoint to fall back on if it changes.
+            guesses = plain(result.simple_products) or []
+            if not guesses:
+                raise ToolError(
+                    "YAZIO's recognition did not return a guess for this photo. "
+                    "Try a clearer or closer photo, or log the food directly "
+                    "with search_products and track_product."
+                )
+            guess = guesses[0]
+            name = guess.get("name") or "Recognized meal"
+            nutrients_raw = guess.get("nutrients") or {}
+
+            entry_id = str(uuid.uuid4()).upper()
+            entry = ConsumedItemsSimpleProductsItem(
+                id=entry_id,
+                date=resolve_timestamp(date),
+                daytime=slot,
+                name=name,
+                nutrients=NutrientSummary.from_dict(nutrients_raw),
+                is_ai_generated=True,
+            )
+
+            response = await api_add_consumed_items.asyncio_detailed(
+                client=client, body=ConsumedItems(simple_products=[entry])
+            )
+            expect_written(ctx, response, f"log the recognized meal '{name}'")
+
+        return round_floats(
+            {
+                "tracked": True,
+                "entry_id": entry_id,
+                "date": day,
+                "daytime": slot,
+                "name": name,
+                "nutrients": group_nutrients(nutrients_raw),
+                "is_ai_generated": True,
             }
         )
 

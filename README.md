@@ -218,6 +218,7 @@ python3 -m yazio_mcp --host 0.0.0.0 --allowed-host yazio.example.com
 | --- | --- |
 | `track_product` | Log a product, by amount or by named serving |
 | `track_recipe` | Log portions of a recipe |
+| `track_meal_photo` | Log a meal from a photo, using YAZIO's AI food recognition |
 | `untrack_item` | Remove a logged item by its `entry_id` |
 | `log_water` | Set the day's water total |
 | `log_weight` | Log a weight measurement |
@@ -306,6 +307,12 @@ These are the ones that shaped code here rather than the spec:
   rejected with a message about collections, and a `portion_count` that
   serialises with a decimal point (`2.0`, `2.5`) is answered with a bare `500`
   and no message at all.
+- **Photo recognition returns one guess, not a list.** `track_meal_photo`
+  uploads to `POST /v22/nutrimind-search/image/{id}` and reads the result back
+  from `GET` on the same path. Every capture came back with exactly one entry
+  in `simple_products` and nothing in `products` or `ingredients`, even for a
+  photo of a mixed plate — so there is no candidate list to choose from, and
+  the tool logs the single guess it gets.
 
 ## Development
 

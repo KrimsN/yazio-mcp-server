@@ -220,8 +220,8 @@ python3 -m yazio_mcp --host 0.0.0.0 --allowed-host yazio.example.com
 
 | Tool | What it does |
 | --- | --- |
-| `track_product` | Log a product, by amount or by named serving |
-| `track_recipe` | Log portions of a recipe |
+| `track_product` | Log a product, by amount or by named serving; keeps the logging streak in sync |
+| `track_recipe` | Log portions of a recipe; keeps the logging streak in sync |
 | `untrack_item` | Remove a logged item by its `entry_id` |
 | `log_water` | Set the day's water total |
 | `log_weight` | Log a weight measurement |
@@ -327,6 +327,33 @@ Two more rules are enforced before the request goes out:
 New products stay on the account unless `is_private` is set to false, which
 offers the product to YAZIO's shared database instead.
 
+## How the logging streak stays in sync
+
+`GET /v22/user/streak` only reports whatever was last pushed to it — nothing
+on the server advances the streak on its own. The app computes each day's
+`streak_count` and `freeze_count` client-side and pushes them with `POST
+/v22/user/streak/{date}` whenever a meal is logged. Logging food through this
+server bypassed that entirely, so an account eating every day could still
+watch its streak sit flat.
+
+`track_product` and `track_recipe` now replay that bookkeeping after every
+successful log, through a shared `sync_streak` helper: read yesterday's (and
+the day before's) recorded state, derive today's counts from it, and push the
+result. The rules, worked out from observed calendars rather than documented
+anywhere:
+
+- **Yesterday logged something** → today's `streak_count` is yesterday's plus
+  one, and `freeze_count` carries over unspent.
+- **Yesterday is empty, but the day before has a freeze banked** → today
+  recovers: `streak_count` is the day before's plus one, and one freeze is
+  spent.
+- **Neither** → the streak restarts at 1, carrying forward whatever
+  `freeze_count` the day before already had (0 if there is no entry at all).
+
+A `StreakDay` also carries `origin_of_recovery`, which was never observed as
+non-null in captured traffic; `sync_streak` leaves it unset on a recovery
+rather than guess a value the app might misread.
+
 ## API behaviour this server works around
 
 The full catalogue of undocumented API behaviour lives in the
@@ -366,6 +393,10 @@ These are the ones that shaped code here rather than the spec:
   rejected with a message about collections, and a `portion_count` that
   serialises with a decimal point (`2.0`, `2.5`) is answered with a bare `500`
   and no message at all.
+- **The logging streak does not advance itself.** It is computed and pushed by
+  the app client-side, so logging food through the API rather than the app
+  left it untouched. `track_product` and `track_recipe` now push it themselves
+  — see "How the logging streak stays in sync" below.
 
 ## Development
 

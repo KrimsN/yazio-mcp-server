@@ -304,7 +304,10 @@ and the three macros have friendly names; anything further has to be named by
 its exact YAZIO key, as `get_product` reports it — `mineral.calcium`,
 `vitamin.b12`. That refusal to guess is deliberate, because the API takes any
 key at all and stores it: a misspelt nutrient would look accepted and then read
-back as absent for the life of the product.
+back as absent for the life of the product. The `yazio://nutrients` MCP
+resource lists every dotted key YAZIO's own client is known to send, so a key
+like salt or saturated fat can be looked up without an existing product to
+copy it from.
 
 Two more rules are enforced before the request goes out:
 

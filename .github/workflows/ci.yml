@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A branch that is pushed to again makes the older run's answer irrelevant, and
+# a pull request is usually pushed to more than once.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # `ruff check` only, never `ruff format --check`: the tree is
+      # hand-formatted on purpose, as the comment in pyproject.toml explains.
+      - run: uv sync
+      - run: uv run ruff check .
+
+  # The suite mocks every HTTP call and reads no secret, so a pull request from
+  # a fork can run it as safely as a push to main.
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      # A break on one version is the interesting result, so the others still
+      # have to report: cancelling them makes a broken floor look like a break
+      # everywhere.
+      fail-fast: false
+      matrix:
+        # Every version pyproject.toml's requires-python admits. The floor is
+        # the one worth running: development happens on a current interpreter,
+        # where a 3.10-incompatible construct passes unnoticed.
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # No uv.lock is committed, so each run resolves afresh — which is what a
+      # fresh install of the published package gets, and therefore what the
+      # ranges in pyproject.toml are worth testing against.
+      - run: uv sync --python ${{ matrix.python }}
+      - run: uv run python -m pytest -q
+
+  # The dev shell is the documented way into this repository, and it pins
+  # yazio-sdk separately from the range pyproject.toml declares. Building it
+  # here is what catches the two drifting apart, or a sha256 left behind by a
+  # version bump — neither of which the uv jobs above can see.
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+      - run: nix-shell --run "make check"

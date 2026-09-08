@@ -329,7 +329,10 @@ make lint
 
 `yazio_sdk` comes from PyPI everywhere — the dev shell, CI and released builds
 alike. The dev shell pins one version of it (see `shell.nix`); keep that inside
-the range `pyproject.toml` declares when either moves.
+the range `pyproject.toml` declares when either moves. CI builds the dev shell
+and runs `make check` in it, so the two drifting apart shows up as a red run
+rather than in someone's checkout, and runs the suite under every Python
+version `requires-python` admits.
 
 The suite mocks every HTTP call, so it covers the shaping logic but cannot catch
 the API contradicting the spec. If a *shape* looks wrong rather than the server's

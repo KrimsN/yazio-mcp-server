@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import base64
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import AnyUrl
 
 from yazio_mcp.server import build_app, build_server
 
@@ -15,7 +17,9 @@ from yazio_mcp.server import build_app, build_server
 # accidentally dropping a registration fails the suite rather than going unnoticed.
 EXPECTED_TOOLS = {
     "browse_recipes",
+    "create_product",
     "create_recipe",
+    "delete_product",
     "delete_recipe",
     "delete_recipe_photo",
     "favorite_recipe",
@@ -31,6 +35,7 @@ EXPECTED_TOOLS = {
     "get_recipe",
     "get_suggested_products",
     "get_water",
+    "list_my_products",
     "list_my_recipes",
     "log_exercise",
     "log_water",
@@ -80,6 +85,22 @@ async def test_dates_are_optional_everywhere():
     """Every date argument defaults to today, so none may be required."""
     for tool in await build_server().list_tools():
         assert "date" not in tool.inputSchema.get("required", [])
+
+
+@pytest.mark.asyncio
+async def test_the_nutrient_reference_resource_is_registered():
+    resources = await build_server().list_resources()
+    assert {str(resource.uri) for resource in resources} == {"yazio://nutrients"}
+
+
+@pytest.mark.asyncio
+async def test_the_nutrient_reference_resource_reads_as_json():
+    contents = await build_server().read_resource(AnyUrl("yazio://nutrients"))
+    (content,) = list(contents)
+
+    payload = json.loads(content.content)
+    assert "nutrient.salt" in payload["known_keys"]["nutrient"]
+    assert payload["aliases"]["calories"] == "energy.energy"
 
 
 @asynccontextmanager

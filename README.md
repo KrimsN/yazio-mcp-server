@@ -212,6 +212,9 @@ python3 -m yazio_mcp --host 0.0.0.0 --allowed-host yazio.example.com
 | `search_products` | Search the food database by name or barcode |
 | `get_product` | One product in full, including its serving options |
 | `get_suggested_products` | What this user usually eats at a given meal |
+| `create_product` | Add a food the database does not have, from its label |
+| `list_my_products` | The products this user added |
+| `delete_product` | Remove one of the user's own products; logged entries stay |
 
 **Tracking**
 
@@ -285,6 +288,45 @@ before the request goes out because the API signals them badly:
   has to serialise without a decimal point. `2` is accepted; `2.0` and `2.5` are
   both answered with a bare `500` and no message.
 
+## How `create_product` works
+
+A product's nutrients are stored per **one** base unit, while every label states
+them per 100 g or per portion. So `create_product` is given the basis alongside
+the numbers and divides it out:
+
+```jsonc
+{
+  "name": "Grandma's bread",
+  "nutrients": { "energy_kcal": 250, "carb": 30, "protein": 12, "fat": 8 },
+  "nutrients_per": 100
+}
+```
+
+The nutrient names read in the same units everything else reports: energy in
+kilocalories, macros in grams, minerals and vitamins in milligrams. Only energy
+and the three macros have friendly names; anything further has to be named by
+its exact YAZIO key, as `get_product` reports it — `mineral.calcium`,
+`vitamin.b12`. That refusal to guess is deliberate, because the API takes any
+key at all and stores it: a misspelt nutrient would look accepted and then read
+back as absent for the life of the product. The `yazio://nutrients` MCP
+resource lists every dotted key YAZIO's own client is known to send, so a key
+like salt or saturated fat can be looked up without an existing product to
+copy it from.
+
+Two more rules are enforced before the request goes out:
+
+- **A base unit of `g` or `ml`.** The field is a free-form string in the API,
+  and a product stored in "oz" would be scaled as though it were grams by
+  everything that reads it back.
+- **Macros that fit inside the food.** More than a gram of carbohydrate, protein
+  and fat per gram of product is impossible, and it is exactly what a per-100 g
+  label submitted with `nutrients_per` left at 1 looks like. Solids only — a
+  millilitre of honey weighs about 1.4 g, so the same reasoning does not hold by
+  volume.
+
+New products stay on the account unless `is_private` is set to false, which
+offers the product to YAZIO's shared database instead.
+
 ## API behaviour this server works around
 
 The full catalogue of undocumented API behaviour lives in the
@@ -313,6 +355,12 @@ These are the ones that shaped code here rather than the spec:
   `unfavorite_recipe` look the entry up first: one to reuse the id a recipe was
   already favourited under rather than listing it twice, the other to learn what
   to delete.
+- **A created product answers `204` with an empty body.** Nothing comes back to
+  say what it was stored as, so `create_product` mints the product's id itself
+  and sends it in the draft — the same trick `create_recipe` uses, and the only
+  way the caller ends up with an id it can track. The API has no update
+  endpoint for a product either, and its draft has no field for a barcode: what
+  is created is what there is.
 - **`create_recipe` validates before sending.** Two API rules are enforced
   client-side because the API signals them badly: fewer than two ingredients is
   rejected with a message about collections, and a `portion_count` that

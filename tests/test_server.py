@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 import pytest
@@ -55,6 +56,16 @@ async def test_every_tool_is_described():
     """Descriptions are how a model picks a tool, so none may be missing."""
     for tool in await build_server().list_tools():
         assert tool.description, f"{tool.name} has no description"
+
+
+@pytest.mark.asyncio
+async def test_every_tool_is_named_in_the_readme():
+    """The README's tables are how a reader finds a tool, and they fall behind
+    silently: a tool added without a row still works, so nothing complains."""
+    readme = (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
+
+    for tool in await build_server().list_tools():
+        assert f"`{tool.name}`" in readme, f"{tool.name} is missing from README.md"
 
 
 @pytest.mark.asyncio

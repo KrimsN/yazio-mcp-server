@@ -78,6 +78,103 @@ _INPUT_FACTORS = {
 ENERGY_KEY = "energy.energy"
 MACRO_KEYS = tuple(f"nutrient.{name}" for name in _MACRO_ORDER)
 
+# Every dotted key YAZIO's own client is known to send, beyond the four
+# aliased above. Sourced from yazio-api-specification's Recipe schema, where
+# the full set is required rather than optional — a caller can look up a key
+# such as salt or saturated fat here instead of guessing wrong against the
+# live API. Not exhaustive: `_api_key` accepts any key of this shape, and new
+# families turn up as more traffic gets captured.
+_KNOWN_KEYS = {
+    "nutrient": (
+        "nutrient.alcohol",
+        "nutrient.carb",
+        "nutrient.cholesterol",
+        "nutrient.dietaryfiber",
+        "nutrient.fat",
+        "nutrient.monounsaturated",
+        "nutrient.polyunsaturated",
+        "nutrient.protein",
+        "nutrient.salt",
+        "nutrient.saturated",
+        "nutrient.sodium",
+        "nutrient.sugar",
+        "nutrient.water",
+    ),
+    "mineral": (
+        "mineral.arsenic",
+        "mineral.boron",
+        "mineral.calcium",
+        "mineral.chlorine",
+        "mineral.chrome",
+        "mineral.copper",
+        "mineral.fluoride",
+        "mineral.fluorine",
+        "mineral.iodine",
+        "mineral.iron",
+        "mineral.magnesium",
+        "mineral.manganese",
+        "mineral.phosphorus",
+        "mineral.potassium",
+        "mineral.selenium",
+        "mineral.sulfur",
+        "mineral.zinc",
+    ),
+    "vitamin": (
+        "vitamin.a",
+        "vitamin.b1",
+        "vitamin.b11",
+        "vitamin.b12",
+        "vitamin.b2",
+        "vitamin.b3",
+        "vitamin.b5",
+        "vitamin.b6",
+        "vitamin.b7",
+        "vitamin.c",
+        "vitamin.d",
+        "vitamin.e",
+        "vitamin.k",
+    ),
+}
+
+# Short glosses for keys whose YAZIO name does not say what they are. Most
+# keys need none — `mineral.calcium` is calcium — so only the handful that
+# would otherwise send a caller guessing are listed here.
+_GLOSSES = {
+    "mineral.chrome": "chromium, the mineral — not a display or browser setting",
+    "vitamin.b11": "folate / folic acid, not a mainstream numbering of B vitamins",
+    "nutrient.saturated": "the saturated share of nutrient.fat, not an addition to it",
+    "nutrient.monounsaturated": "the monounsaturated share of nutrient.fat, not an addition to it",
+    "nutrient.polyunsaturated": "the polyunsaturated share of nutrient.fat, not an addition to it",
+    "nutrient.dietaryfiber": "dietary fibre",
+}
+
+
+def nutrient_reference() -> dict[str, Any]:
+    """Build the reference payload served by the `yazio://nutrients` resource.
+
+    Lets a caller look up a nutrient's exact dotted key before calling
+    create_product or create_recipe, rather than only after a ToolError — or
+    worse, after the API has silently stored a misspelt one.
+    """
+    return {
+        "aliases": dict(sorted(_ALIASES.items())),
+        "known_keys": {family: list(keys) for family, keys in _KNOWN_KEYS.items()},
+        "glosses": dict(sorted(_GLOSSES.items())),
+        "units": {
+            "energy.energy": "kcal",
+            "nutrient.*": "g",
+            "mineral.*": "mg",
+            "vitamin.*": "mg",
+        },
+        "note": (
+            "Values are supplied per one base unit, in these units — same as "
+            "get_product reports them. A key outside this list is still accepted "
+            "if it follows the '<family>.<name>' shape with family one of energy, "
+            "nutrient, mineral, vitamin; this list is what YAZIO's own client is "
+            "known to send, not an exhaustive schema."
+        ),
+    }
+
 
 def group_nutrients(raw: Mapping[str, Any] | None) -> dict[str, Any]:
     """Turn a flat dotted nutrient map into grouped, unit-annotated JSON.
@@ -195,9 +292,9 @@ def _api_key(key: str) -> str:
 
     raise ToolError(
         f"'{key}' is not a nutrient this server will store. Use one of "
-        f"{', '.join(sorted(_ALIASES))}, or the exact dotted key a product "
-        "already carries in get_product, such as 'mineral.calcium' or "
-        "'vitamin.b12'."
+        f"{', '.join(sorted(_ALIASES))}, the exact dotted key a product "
+        "already carries in get_product, or one from the yazio://nutrients "
+        "resource, such as 'mineral.calcium' or 'nutrient.salt'."
     )
 
 

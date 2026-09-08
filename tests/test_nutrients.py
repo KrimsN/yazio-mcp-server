@@ -8,6 +8,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from yazio_mcp.nutrients import (
     flatten_nutrients,
     group_nutrients,
+    nutrient_reference,
     scale_nutrients,
     sum_nutrients,
 )
@@ -191,6 +192,50 @@ def test_a_basis_of_zero_is_refused():
 def test_an_empty_table_is_refused():
     with pytest.raises(ToolError):
         flatten_nutrients({}, basis=100)
+
+
+def test_reference_lists_every_alias():
+    assert nutrient_reference()["aliases"] == {
+        "calories": "energy.energy",
+        "carb": "nutrient.carb",
+        "carbohydrate": "nutrient.carb",
+        "carbohydrates": "nutrient.carb",
+        "carbs": "nutrient.carb",
+        "energy": "energy.energy",
+        "energy_kcal": "energy.energy",
+        "fat": "nutrient.fat",
+        "kcal": "energy.energy",
+        "protein": "nutrient.protein",
+    }
+
+
+def test_reference_known_keys_accept_flattening():
+    """Every listed key must actually be one `flatten_nutrients` takes as given."""
+    reference = nutrient_reference()
+
+    for keys in reference["known_keys"].values():
+        for key in keys:
+            assert set(flatten_nutrients({key: 1}, basis=1)) == {key}
+
+
+def test_reference_glosses_only_cover_known_keys():
+    """A gloss for a key that was renamed or dropped would go stale silently."""
+    reference = nutrient_reference()
+    known = {key for keys in reference["known_keys"].values() for key in keys}
+
+    assert set(reference["glosses"]) <= known
+
+
+def test_reference_glosses_the_easily_misread_keys():
+    glosses = nutrient_reference()["glosses"]
+
+    assert "chromium" in glosses["mineral.chrome"]
+    assert "folate" in glosses["vitamin.b11"] or "folic acid" in glosses["vitamin.b11"]
+
+
+def test_reference_includes_keys_the_earlier_bug_report_named():
+    known = {key for keys in nutrient_reference()["known_keys"].values() for key in keys}
+    assert {"nutrient.salt", "nutrient.saturated", "nutrient.sugar"} <= known
 
 
 def test_a_recipe_round_trip_divides_cleanly():

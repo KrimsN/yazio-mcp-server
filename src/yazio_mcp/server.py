@@ -9,6 +9,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 
 from .middleware import BasicAuthMiddleware
+from .nutrients import nutrient_reference
 from .tools import register_all
 
 INSTRUCTIONS = """\
@@ -67,7 +68,28 @@ def build_server(allowed_hosts: Sequence[str] | None = None) -> FastMCP:
         transport_security=security,
     )
     register_all(mcp)
+    _register_resources(mcp)
     return mcp
+
+
+def _register_resources(mcp: FastMCP) -> None:
+    """Attach read-only reference content, as distinct from callable tools."""
+
+    @mcp.resource(
+        "yazio://nutrients",
+        name="nutrient_keys",
+        title="Known nutrient keys",
+        description=(
+            "Every nutrient dotted-key create_product and create_recipe are known "
+            "to accept, beyond the calories/carb/protein/fat aliases. Read this "
+            "before guessing a key like 'salt' or 'fat.saturated' — the API "
+            "stores any key at all without complaint, so a wrong guess looks "
+            "accepted and then reads back as absent."
+        ),
+        mime_type="application/json",
+    )
+    def nutrient_keys() -> dict[str, object]:
+        return nutrient_reference()
 
 
 def build_app(allowed_hosts: Sequence[str] | None = None) -> Starlette:

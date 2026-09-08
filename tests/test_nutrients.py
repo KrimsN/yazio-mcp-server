@@ -218,6 +218,21 @@ def test_reference_known_keys_accept_flattening():
             assert set(flatten_nutrients({key: 1}, basis=1)) == {key}
 
 
+def test_reference_glosses_only_cover_known_keys():
+    """A gloss for a key that was renamed or dropped would go stale silently."""
+    reference = nutrient_reference()
+    known = {key for keys in reference["known_keys"].values() for key in keys}
+
+    assert set(reference["glosses"]) <= known
+
+
+def test_reference_glosses_the_easily_misread_keys():
+    glosses = nutrient_reference()["glosses"]
+
+    assert "chromium" in glosses["mineral.chrome"]
+    assert "folate" in glosses["vitamin.b11"] or "folic acid" in glosses["vitamin.b11"]
+
+
 def test_reference_includes_keys_the_earlier_bug_report_named():
     known = {key for keys in nutrient_reference()["known_keys"].values() for key in keys}
     assert {"nutrient.salt", "nutrient.saturated", "nutrient.sugar"} <= known

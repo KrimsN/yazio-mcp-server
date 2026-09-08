@@ -136,6 +136,18 @@ _KNOWN_KEYS = {
     ),
 }
 
+# Short glosses for keys whose YAZIO name does not say what they are. Most
+# keys need none — `mineral.calcium` is calcium — so only the handful that
+# would otherwise send a caller guessing are listed here.
+_GLOSSES = {
+    "mineral.chrome": "chromium, the mineral — not a display or browser setting",
+    "vitamin.b11": "folate / folic acid, not a mainstream numbering of B vitamins",
+    "nutrient.saturated": "the saturated share of nutrient.fat, not an addition to it",
+    "nutrient.monounsaturated": "the monounsaturated share of nutrient.fat, not an addition to it",
+    "nutrient.polyunsaturated": "the polyunsaturated share of nutrient.fat, not an addition to it",
+    "nutrient.dietaryfiber": "dietary fibre",
+}
+
 
 def nutrient_reference() -> dict[str, Any]:
     """Build the reference payload served by the `yazio://nutrients` resource.
@@ -147,6 +159,7 @@ def nutrient_reference() -> dict[str, Any]:
     return {
         "aliases": dict(sorted(_ALIASES.items())),
         "known_keys": {family: list(keys) for family, keys in _KNOWN_KEYS.items()},
+        "glosses": dict(sorted(_GLOSSES.items())),
         "units": {
             "energy.energy": "kcal",
             "nutrient.*": "g",

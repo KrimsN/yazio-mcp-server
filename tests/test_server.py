@@ -17,6 +17,7 @@ EXPECTED_TOOLS = {
     "create_recipe",
     "delete_recipe",
     "delete_recipe_photo",
+    "favorite_recipe",
     "get_activity_summary",
     "get_daily_summary",
     "get_diary",
@@ -37,6 +38,7 @@ EXPECTED_TOOLS = {
     "set_recipe_photo",
     "track_product",
     "track_recipe",
+    "unfavorite_recipe",
     "untrack_item",
     "update_recipe",
 }
